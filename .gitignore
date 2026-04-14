@@ -1,5 +1,19 @@
 node_modules
-# Keep environment variables out of version control
+dist
+coverage
 .env
+.env.local
+*.log
+.DS_Store
 
+# Storage
+storage/uploads/*
+storage/cog/*
+storage/videos/*
+!storage/uploads/.gitkeep
+!storage/cog/.gitkeep
+!storage/videos/.gitkeep
+
+# Prisma generated
 /generated/prisma
+prisma/migrations/dev.db*
