@@ -1,6 +1,6 @@
-# SamGeo Backend
+# Sam-Landshaft Backend
 
-NestJS + Prisma + PostgreSQL backend for the SamGeo.uz landscape geoportal.
+NestJS + Prisma + PostgreSQL backend for the Sam-Landshaft geoportal (Samarqand viloyati landshaft xaritalari).
 
 ## Features
 
@@ -29,7 +29,7 @@ npm install
 # 2. Start PostgreSQL (from project root)
 cd ..
 docker compose up -d postgres
-cd samgeo-backend
+cd sam-landshaft-backend
 
 # 3. Env
 cp .env.example .env
@@ -46,7 +46,7 @@ API will be available at http://localhost:3000/api
 
 ## Default admin
 
-- Email: `admin@samgeo.uz`
+- Email: `admin@sam-landshaft.uz`
 - Password: `ChangeMe123!`
 
 ## Endpoints

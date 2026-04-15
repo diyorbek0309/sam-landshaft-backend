@@ -1,4 +1,4 @@
-# SamGeo Backend — Production Dockerfile
+# Sam-Landshaft Backend — Production Dockerfile
 # Includes GDAL and FFMPEG for GeoTIFF/video processing
 
 FROM node:22-bookworm-slim AS builder

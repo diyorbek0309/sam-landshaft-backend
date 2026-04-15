@@ -23,6 +23,6 @@ async function bootstrap() {
 
   const port = config.get<number>('PORT', 3000);
   await app.listen(port);
-  console.log(`SamGeo backend running on http://localhost:${port}/api`);
+  console.log(`Sam-Landshaft backend running on http://localhost:${port}/api`);
 }
 bootstrap();
