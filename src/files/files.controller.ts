@@ -14,11 +14,27 @@ import {
   Body,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { Response } from 'express';
+import type { Response } from 'express';
 import * as fs from 'fs';
+import * as path from 'path';
+import { diskStorage } from 'multer';
 import { FilesService } from './files.service';
 import { UploadFileDto } from './dto/upload-file.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
+// Disk storage — katta fayllar (1 GB+) uchun buffer'dan emas, disk'dan o'qiladi
+const upload = diskStorage({
+  destination: (_req, _file, cb) => {
+    const dir = process.env.UPLOAD_DIR || './storage/uploads';
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const name = `${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
+    cb(null, name);
+  },
+});
 
 @Controller('files')
 export class FilesController {
@@ -44,6 +60,7 @@ export class FilesController {
   @Post('upload')
   @UseInterceptors(
     FileInterceptor('file', {
+      storage: upload,
       limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // 2 GB
     }),
   )
@@ -54,9 +71,11 @@ export class FilesController {
     if (!file) throw new BadRequestException('Fayl berilmadi');
     const name = file.originalname.toLowerCase();
     if (!name.endsWith('.tif') && !name.endsWith('.tiff')) {
+      // Disk'dagi faylni o'chirish
+      fs.unlinkSync(file.path);
       throw new BadRequestException('Faqat .tif/.tiff fayllarni yuklash mumkin');
     }
-    return this.service.upload(file, dto.categoryId, dto.year);
+    return this.service.uploadFromDisk(file, dto.categoryId, dto.year);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -80,7 +99,9 @@ export class FilesController {
       throw new BadRequestException('Fayl server-da topilmadi');
     }
 
+    const stat = fs.statSync(info.path);
     res.setHeader('Content-Type', 'image/tiff');
+    res.setHeader('Content-Length', stat.size);
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="${info.filename}"`,
@@ -88,10 +109,6 @@ export class FilesController {
     fs.createReadStream(info.path).pipe(res);
   }
 
-  /**
-   * Stream COG file for Leaflet's georaster layer
-   * Supports HTTP Range Requests (COG is optimized for partial reads)
-   */
   @Get(':id/cog')
   async streamCog(
     @Param('id', ParseIntPipe) id: number,
@@ -103,7 +120,7 @@ export class FilesController {
     }
     res.setHeader('Content-Type', 'image/tiff');
     res.setHeader('Accept-Ranges', 'bytes');
-    // Express handles Range requests automatically via sendFile
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
     res.sendFile(info.path);
   }
 }

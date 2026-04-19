@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { GdalService } from './services/gdal.service';
@@ -35,7 +36,7 @@ export class FilesService {
   }
 
   findAll(params?: { categoryId?: number; year?: number }) {
-    const where: any = {};
+    const where: Record<string, unknown> = {};
     if (params?.categoryId) where.categoryId = params.categoryId;
     if (params?.year) where.year = params.year;
 
@@ -55,7 +56,11 @@ export class FilesService {
     return file;
   }
 
-  async upload(
+  /**
+   * Multer disk storage'dan kelgan fayl bilan ishlash.
+   * file.path — disk'dagi vaqtinchalik joy.
+   */
+  async uploadFromDisk(
     file: Express.Multer.File,
     categoryId: number,
     year: number,
@@ -65,14 +70,18 @@ export class FilesService {
     const category = await this.prisma.category.findUnique({
       where: { id: categoryId },
     });
-    if (!category) throw new BadRequestException('Kategoriya topilmadi');
+    if (!category) {
+      await fs.unlink(file.path).catch(() => {});
+      throw new BadRequestException('Kategoriya topilmadi');
+    }
 
     const existing = await this.prisma.geotiffFile.findUnique({
       where: { categoryId_year: { categoryId, year } },
     });
     if (existing) {
+      await fs.unlink(file.path).catch(() => {});
       throw new BadRequestException(
-        `Bu kategoriya va yil uchun fayl allaqachon mavjud. Avval mavjudini o'chiring.`,
+        `Bu kategoriya va yil uchun fayl allaqachon mavjud (ID: ${existing.id}). Avval mavjudini o'chiring.`,
       );
     }
 
@@ -80,23 +89,35 @@ export class FilesService {
     const originalPath = path.join(this.uploadDir, `${baseName}.tif`);
     const cogPath = path.join(this.cogDir, `${baseName}_cog.tif`);
 
-    // Save uploaded file
-    await fs.writeFile(originalPath, file.buffer);
-
-    // Convert to COG
-    try {
-      await this.gdal.toCog(originalPath, cogPath);
-    } catch (err) {
-      await fs.unlink(originalPath).catch(() => {});
-      throw err;
+    // Multer yozgan faylni to'g'ri joyga ko'chirish
+    if (file.path !== originalPath) {
+      await fs.rename(file.path, originalPath).catch(async () => {
+        // rename xatolik bersa (boshqa disk bo'lishi mumkin) — copy + delete
+        await fs.copyFile(file.path, originalPath);
+        await fs.unlink(file.path).catch(() => {});
+      });
     }
 
-    // Read GeoTIFF info
+    const fileSize = (await fs.stat(originalPath)).size;
+
+    // COG konvertatsiya
+    try {
+      this.logger.log(`COG konvertatsiya boshlanmoqda: ${originalPath} (${(fileSize / 1024 / 1024).toFixed(1)} MB)`);
+      await this.gdal.toCog(originalPath, cogPath);
+    } catch (err) {
+      this.logger.error(`COG konvertatsiya xatolik: ${(err as Error).message}`);
+      await fs.unlink(originalPath).catch(() => {});
+      throw new BadRequestException(
+        `GeoTIFF faylni COG formatiga o'girib bo'lmadi: ${(err as Error).message}`,
+      );
+    }
+
+    // GeoTIFF ma'lumotlarini o'qish
     let info;
     try {
       info = await this.gdal.getInfo(cogPath);
     } catch (err) {
-      this.logger.warn(`Failed to read info: ${(err as Error).message}`);
+      this.logger.warn(`GeoTIFF info o'qib bo'lmadi: ${(err as Error).message}`);
     }
 
     const record = await this.prisma.geotiffFile.create({
@@ -106,7 +127,7 @@ export class FilesService {
         filename: file.originalname,
         cogPath,
         originalPath,
-        fileSize: BigInt(file.size),
+        fileSize: BigInt(fileSize),
         width: info?.width,
         height: info?.height,
         minX: info?.bounds.minX,
@@ -117,7 +138,8 @@ export class FilesService {
       include: { category: true },
     });
 
-    return record;
+    this.logger.log(`Fayl muvaffaqiyatli yuklandi: ${file.originalname} → COG (ID: ${record.id})`);
+    return this.serializeFile(record);
   }
 
   async remove(id: number) {
@@ -126,7 +148,7 @@ export class FilesService {
       await fs.unlink(file.cogPath).catch(() => {});
       await fs.unlink(file.originalPath).catch(() => {});
     } catch (err) {
-      this.logger.warn(`Failed to delete physical files: ${(err as Error).message}`);
+      this.logger.warn(`Fayllarni o'chirishda xatolik: ${(err as Error).message}`);
     }
     await this.prisma.geotiffFile.delete({ where: { id } });
     return { success: true };
@@ -141,7 +163,17 @@ export class FilesService {
     const file = await this.findOne(id);
     return {
       path: file.cogPath,
-      filename: `${file.category.slug}_${file.year}_cog.tif`,
+      filename: `${file.category!.slug}_${file.year}_cog.tif`,
+    };
+  }
+
+  /**
+   * BigInt → number konvertatsiya (JSON serialization uchun)
+   */
+  private serializeFile(record: any) {
+    return {
+      ...record,
+      fileSize: Number(record.fileSize),
     };
   }
 }

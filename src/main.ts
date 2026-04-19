@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
+import { BigIntSerializationInterceptor } from './common/bigint-serialization.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -17,7 +18,7 @@ async function bootstrap() {
   const origins = corsEnv.split(',').map((s) => s.trim()).filter(Boolean);
 
   app.enableCors({
-    origin: (origin, callback) => {
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
       if (!origin) return callback(null, true); // curl, mobile apps
       if (origins.includes(origin) || origins.includes('*')) {
         return callback(null, true);
@@ -27,6 +28,7 @@ async function bootstrap() {
     credentials: true,
   });
 
+  app.useGlobalInterceptors(new BigIntSerializationInterceptor());
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
