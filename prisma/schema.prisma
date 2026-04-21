@@ -29,18 +29,23 @@ enum Role {
 
 model Category {
   id          Int      @id @default(autoincrement())
-  name        String // e.g. "Tuproq sho'rlanishi"
-  slug        String   @unique // e.g. "soil-salinity"
+  parentId    Int?     @map("parent_id")
+  parent      Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    Category[] @relation("CategoryTree")
+  name        String
+  slug        String   @unique
   description String?
-  unit        String? // e.g. "dS/m", "%"
-  colorScheme String?  @map("color_scheme") // JSON: [{value, color}, ...]
+  unit        String?
+  colorScheme String?  @map("color_scheme")
   minValue    Float?   @map("min_value")
   maxValue    Float?   @map("max_value")
+  sortOrder   Int      @default(0) @map("sort_order")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   files GeotiffFile[]
 
+  @@index([parentId])
   @@map("categories")
 }
 

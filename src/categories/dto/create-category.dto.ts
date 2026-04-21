@@ -1,4 +1,5 @@
 import {
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsNumber,
@@ -7,6 +8,10 @@ import {
 } from 'class-validator';
 
 export class CreateCategoryDto {
+  @IsInt()
+  @IsOptional()
+  parentId?: number | null;
+
   @IsString()
   @IsNotEmpty()
   @MaxLength(200)
@@ -28,7 +33,7 @@ export class CreateCategoryDto {
 
   @IsString()
   @IsOptional()
-  colorScheme?: string; // JSON string
+  colorScheme?: string;
 
   @IsNumber()
   @IsOptional()
@@ -37,4 +42,8 @@ export class CreateCategoryDto {
   @IsNumber()
   @IsOptional()
   maxValue?: number;
+
+  @IsInt()
+  @IsOptional()
+  sortOrder?: number;
 }

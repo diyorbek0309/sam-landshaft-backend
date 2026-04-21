@@ -17,3 +17,7 @@ storage/videos/*
 # Prisma generated
 /generated/prisma
 prisma/migrations/dev.db*
+
+# TS incremental build info
+*.tsbuildinfo
+
