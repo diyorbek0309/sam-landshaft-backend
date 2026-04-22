@@ -123,4 +123,12 @@ export class FilesController {
     res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
     res.sendFile(info.path);
   }
+
+  // Georaster probes for a `.ovr` sidecar overview file before every fetch.
+  // We don't generate one (COG already has internal overviews), so return an
+  // empty 204 instead of a 404 — keeps the browser console clean.
+  @Get(':id/cog.ovr')
+  cogOvrSidecar(@Res() res: Response) {
+    res.status(204).end();
+  }
 }
