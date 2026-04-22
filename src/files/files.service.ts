@@ -142,6 +142,48 @@ export class FilesService {
     return this.serializeFile(record);
   }
 
+  async update(
+    id: number,
+    dto: { categoryId?: number; year?: number },
+  ) {
+    const existing = await this.findOne(id);
+    const nextCategoryId = dto.categoryId ?? existing.categoryId;
+    const nextYear = dto.year ?? existing.year;
+
+    if (nextCategoryId !== existing.categoryId) {
+      const category = await this.prisma.category.findUnique({
+        where: { id: nextCategoryId },
+      });
+      if (!category) throw new BadRequestException('Kategoriya topilmadi');
+      if (category.parentId == null) {
+        throw new BadRequestException(
+          "Fayl faqat subkategoriyaga bog'lanishi mumkin",
+        );
+      }
+    }
+
+    if (nextCategoryId !== existing.categoryId || nextYear !== existing.year) {
+      const clash = await this.prisma.geotiffFile.findUnique({
+        where: { categoryId_year: { categoryId: nextCategoryId, year: nextYear } },
+      });
+      if (clash && clash.id !== id) {
+        throw new BadRequestException(
+          `Bu kategoriya va yil uchun fayl allaqachon mavjud (ID: ${clash.id})`,
+        );
+      }
+    }
+
+    const updated = await this.prisma.geotiffFile.update({
+      where: { id },
+      data: {
+        categoryId: nextCategoryId,
+        year: nextYear,
+      },
+      include: { category: true },
+    });
+    return this.serializeFile(updated);
+  }
+
   async remove(id: number) {
     const file = await this.findOne(id);
     try {

@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   Res,
@@ -76,6 +77,15 @@ export class FilesController {
       throw new BadRequestException('Faqat .tif/.tiff fayllarni yuklash mumkin');
     }
     return this.service.uploadFromDisk(file, dto.categoryId, dto.year);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id')
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { categoryId?: number; year?: number },
+  ) {
+    return this.service.update(id, dto);
   }
 
   @UseGuards(JwtAuthGuard)
