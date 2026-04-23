@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   Res,
   UploadedFile,
   UseGuards,
@@ -15,7 +16,7 @@ import {
   Body,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { diskStorage } from 'multer';
@@ -122,15 +123,34 @@ export class FilesController {
   @Get(':id/cog')
   async streamCog(
     @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
     @Res() res: Response,
   ) {
     const info = await this.service.getCogPath(id);
     if (!fs.existsSync(info.path)) {
       throw new BadRequestException('COG fayl topilmadi');
     }
+
+    // COG files are immutable: id + mtime uniquely identifies content.
+    // Aggressive caching lets browsers and Cloudflare serve repeat
+    // requests from cache — animation scrubbing becomes instant on
+    // the 2nd pass, and new visitors benefit from CDN edge hits.
+    const stat = fs.statSync(info.path);
+    const etag = `"${id}-${stat.size}-${stat.mtimeMs.toFixed(0)}"`;
+    const ifNoneMatch = req.headers['if-none-match'];
+    if (ifNoneMatch === etag) {
+      res.status(304).end();
+      return;
+    }
+
     res.setHeader('Content-Type', 'image/tiff');
     res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
+    res.setHeader(
+      'Access-Control-Expose-Headers',
+      'Content-Range, Accept-Ranges, Content-Length, ETag',
+    );
+    res.setHeader('ETag', etag);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     res.sendFile(info.path);
   }
 
