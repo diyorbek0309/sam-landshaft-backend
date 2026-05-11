@@ -7,15 +7,38 @@ import {
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
+import * as os from 'os';
 import * as path from 'path';
+import * as crypto from 'crypto';
+import { LRUCache } from 'lru-cache';
 import { PrismaService } from '../prisma/prisma.service';
-import { GdalService } from './services/gdal.service';
+import { GdalService, type BboxLike } from './services/gdal.service';
+
+export interface YearStatPoint {
+  year: number;
+  fileId: number;
+  min: number | null;
+  max: number | null;
+  mean: number | null;
+  stdDev: number | null;
+  validPixels: number;
+}
+
+export interface YearStatsResponse {
+  categoryId: number;
+  bbox: BboxLike;
+  years: YearStatPoint[];
+}
 
 @Injectable()
 export class FilesService {
   private readonly logger = new Logger(FilesService.name);
   private readonly uploadDir: string;
   private readonly cogDir: string;
+  private readonly statsCache = new LRUCache<string, YearStatsResponse>({
+    max: 100,
+    ttl: 1000 * 60 * 30,
+  });
 
   constructor(
     private readonly prisma: PrismaService,
@@ -217,5 +240,78 @@ export class FilesService {
       ...record,
       fileSize: Number(record.fileSize),
     };
+  }
+
+  /**
+   * Crop a file's COG to a lon/lat bbox and write to a tmp .tif.
+   * Caller is responsible for unlinking the returned path after streaming it.
+   */
+  async cropToTiff(
+    id: number,
+    bbox: BboxLike,
+  ): Promise<{ path: string; filename: string }> {
+    const file = await this.findOne(id);
+    const tmpName = `crop_${id}_${crypto.randomBytes(6).toString('hex')}.tif`;
+    const tmpPath = path.join(os.tmpdir(), tmpName);
+    await this.gdal.cropBbox(file.cogPath, tmpPath, bbox);
+    const base = file.filename.replace(/\.tiff?$/i, '');
+    return { path: tmpPath, filename: `${base}_crop.tif` };
+  }
+
+  /**
+   * Get per-year stats (min/max/mean/stdDev/validPixels) for the bbox
+   * across every file in the category. Cached by (categoryId, bbox-quantised).
+   */
+  async getYearStats(
+    categoryId: number,
+    bbox: BboxLike,
+  ): Promise<YearStatsResponse> {
+    const q = (n: number) => Math.round(n * 10000) / 10000;
+    const key = JSON.stringify({
+      categoryId,
+      b: [q(bbox.minLng), q(bbox.minLat), q(bbox.maxLng), q(bbox.maxLat)],
+    });
+    const cached = this.statsCache.get(key);
+    if (cached) return cached;
+
+    const files = await this.prisma.geotiffFile.findMany({
+      where: { categoryId },
+      orderBy: { year: 'asc' },
+    });
+
+    const points: YearStatPoint[] = [];
+    for (const f of files) {
+      try {
+        const s = await this.gdal.statsForBbox(f.cogPath, bbox);
+        const totalPixels = (f.width ?? 0) * (f.height ?? 0);
+        const validPixels = Math.round(totalPixels * (s.validPercent / 100));
+        points.push({
+          year: f.year,
+          fileId: f.id,
+          min: s.min,
+          max: s.max,
+          mean: s.mean,
+          stdDev: s.stdDev,
+          validPixels,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Year stats failed for fileId=${f.id}: ${(err as Error).message}`,
+        );
+        points.push({
+          year: f.year,
+          fileId: f.id,
+          min: null,
+          max: null,
+          mean: null,
+          stdDev: null,
+          validPixels: 0,
+        });
+      }
+    }
+
+    const out: YearStatsResponse = { categoryId, bbox, years: points };
+    this.statsCache.set(key, out);
+    return out;
   }
 }

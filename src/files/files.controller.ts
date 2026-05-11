@@ -22,6 +22,7 @@ import * as path from 'path';
 import { diskStorage } from 'multer';
 import { FilesService } from './files.service';
 import { UploadFileDto } from './dto/upload-file.dto';
+import { parseBbox, BadBboxError } from './dto/crop-bbox.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 // Disk storage — katta fayllar (1 GB+) uchun buffer'dan emas, disk'dan o'qiladi
@@ -51,6 +52,28 @@ export class FilesController {
       categoryId: categoryId ? Number(categoryId) : undefined,
       year: year ? Number(year) : undefined,
     });
+  }
+
+  // NOTE: `stats` must be declared BEFORE `:id` — otherwise Nest matches
+  // `/files/stats` against `findOne` and parses `stats` as the id (NaN → 400).
+  @Get('stats')
+  async stats(
+    @Query('categoryId') categoryIdRaw: string,
+    @Query('bbox') bboxRaw: string,
+  ) {
+    const categoryId = Number(categoryIdRaw);
+    if (!Number.isFinite(categoryId)) {
+      throw new BadRequestException("categoryId raqam bo'lishi kerak");
+    }
+    try {
+      const bbox = parseBbox(bboxRaw);
+      return await this.service.getYearStats(categoryId, bbox);
+    } catch (err: any) {
+      if (err instanceof BadBboxError) {
+        throw new BadRequestException(err.message);
+      }
+      throw err;
+    }
   }
 
   @Get(':id')
@@ -160,5 +183,41 @@ export class FilesController {
   @Get(':id/cog.ovr')
   cogOvrSidecar(@Res() res: Response) {
     res.status(204).end();
+  }
+
+  /**
+   * Crop the file's COG to the given lon/lat bbox and stream a fresh GeoTIFF.
+   * Tmp file is unlinked once the stream closes.
+   */
+  @Get(':id/crop')
+  async crop(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('bbox') bboxRaw: string,
+    @Res() res: Response,
+  ) {
+    let bbox;
+    try {
+      bbox = parseBbox(bboxRaw);
+    } catch (err: any) {
+      throw new BadRequestException(err.message ?? 'bbox xato');
+    }
+
+    const out = await this.service.cropToTiff(id, bbox);
+    if (!fs.existsSync(out.path)) {
+      throw new BadRequestException(
+        'Qirqilgan fayl yaratilmadi (hudud rasterdan tashqarida?)',
+      );
+    }
+
+    res.setHeader('Content-Type', 'image/tiff');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${out.filename}"`,
+    );
+    const stream = fs.createReadStream(out.path);
+    const cleanup = () => fs.unlink(out.path, () => {});
+    stream.on('close', cleanup);
+    stream.on('error', cleanup);
+    stream.pipe(res);
   }
 }
