@@ -2,6 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 const execFileAsync = promisify(execFile);
 
@@ -119,24 +122,39 @@ export class GdalService {
   }
 
   /**
-   * Compute per-bbox stats via `gdalinfo -stats -projwin <bbox> -json`.
-   * Returns null fields when GDAL did not produce any statistics.
+   * Compute per-bbox stats.
+   *
+   * GDAL 3.9+ supports `gdalinfo -projwin` directly. Earlier versions
+   * (3.8.x on Debian 12) don't — so we first crop the bbox into a tmp
+   * GTiff via `gdal_translate -projwin` and run `gdalinfo -stats -json`
+   * against that. Tmp file is unlinked at the end.
    */
   async statsForBbox(inputPath: string, bbox: BboxLike): Promise<BboxStats> {
-    const args = [
-      '-stats',
-      '-json',
-      '-projwin',
-      String(bbox.minLng),
-      String(bbox.maxLat),
-      String(bbox.maxLng),
-      String(bbox.minLat),
-      '-projwin_srs',
-      'EPSG:4326',
-      inputPath,
-    ];
+    const tmpPath = path.join(
+      os.tmpdir(),
+      `stats_${Date.now()}_${Math.random().toString(36).slice(2)}.tif`,
+    );
     try {
-      const { stdout } = await execFileAsync('gdalinfo', args);
+      // 1. Crop to tmp file.
+      await execFileAsync('gdal_translate', [
+        '-q',
+        '-projwin',
+        String(bbox.minLng),
+        String(bbox.maxLat),
+        String(bbox.maxLng),
+        String(bbox.minLat),
+        '-projwin_srs',
+        'EPSG:4326',
+        inputPath,
+        tmpPath,
+      ]);
+
+      // 2. Read stats from the cropped file.
+      const { stdout } = await execFileAsync('gdalinfo', [
+        '-stats',
+        '-json',
+        tmpPath,
+      ]);
       const info = JSON.parse(stdout);
       const band = info.bands?.[0] ?? {};
       const s = band.statistics ?? {};
@@ -153,6 +171,10 @@ export class GdalService {
     } catch (err: any) {
       this.logger.error(`statsForBbox failed: ${err.message}`);
       throw new Error(`statsForBbox failed: ${err.message}`);
+    } finally {
+      // Cleanup tmp file (and the gdalinfo-generated .aux.xml sidecar).
+      await fs.promises.unlink(tmpPath).catch(() => {});
+      await fs.promises.unlink(`${tmpPath}.aux.xml`).catch(() => {});
     }
   }
 }

@@ -64,10 +64,15 @@ describe('GdalService.statsForBbox', () => {
         },
       ],
     });
-    (childProcess.execFile as unknown as jest.Mock).mockImplementationOnce(
-      (_b: string, _a: string[], cb: any) =>
+    const mock = childProcess.execFile as unknown as jest.Mock;
+    // First call: gdal_translate (crop). Second call: gdalinfo -stats.
+    mock
+      .mockImplementationOnce((_b: string, _a: string[], cb: any) =>
+        cb(null, { stdout: '', stderr: '' }),
+      )
+      .mockImplementationOnce((_b: string, _a: string[], cb: any) =>
         cb(null, { stdout: fakeJson, stderr: '' }),
-    );
+      );
     const out = await svc.statsForBbox('/in.tif', {
       minLng: 66,
       minLat: 39,
@@ -81,13 +86,19 @@ describe('GdalService.statsForBbox', () => {
       stdDev: 0.2,
       validPercent: 75,
     });
+    expect(mock.mock.calls[0][0]).toBe('gdal_translate');
+    expect(mock.mock.calls[1][0]).toBe('gdalinfo');
   });
 
   it('returns null fields when gdalinfo reports no stats', async () => {
-    (childProcess.execFile as unknown as jest.Mock).mockImplementationOnce(
-      (_b: string, _a: string[], cb: any) =>
+    const mock = childProcess.execFile as unknown as jest.Mock;
+    mock
+      .mockImplementationOnce((_b: string, _a: string[], cb: any) =>
+        cb(null, { stdout: '', stderr: '' }),
+      )
+      .mockImplementationOnce((_b: string, _a: string[], cb: any) =>
         cb(null, { stdout: JSON.stringify({ bands: [{}] }), stderr: '' }),
-    );
+      );
     const out = await svc.statsForBbox('/in.tif', {
       minLng: 66,
       minLat: 39,
