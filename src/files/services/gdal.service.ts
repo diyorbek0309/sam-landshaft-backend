@@ -12,6 +12,21 @@ export interface GeotiffInfo {
   bands: number;
 }
 
+export interface BboxLike {
+  minLng: number;
+  minLat: number;
+  maxLng: number;
+  maxLat: number;
+}
+
+export interface BboxStats {
+  min: number | null;
+  max: number | null;
+  mean: number | null;
+  stdDev: number | null;
+  validPercent: number;
+}
+
 @Injectable()
 export class GdalService {
   private readonly logger = new Logger(GdalService.name);
@@ -68,6 +83,76 @@ export class GdalService {
     } catch (err: any) {
       this.logger.error(`gdalinfo failed: ${err.message}`);
       throw new Error(`Failed to read GeoTIFF info: ${err.message}`);
+    }
+  }
+
+  /**
+   * Crop GeoTIFF to a lon/lat bbox via gdal_translate -projwin.
+   * Output is a plain compressed GeoTIFF (not COG) — cropped region is small.
+   */
+  async cropBbox(
+    inputPath: string,
+    outputPath: string,
+    bbox: BboxLike,
+  ): Promise<void> {
+    const bin = this.config.get<string>('GDAL_BIN', 'gdal_translate');
+    const args = [
+      '-projwin',
+      String(bbox.minLng),
+      String(bbox.maxLat),
+      String(bbox.maxLng),
+      String(bbox.minLat),
+      '-projwin_srs',
+      'EPSG:4326',
+      '-co',
+      'COMPRESS=DEFLATE',
+      inputPath,
+      outputPath,
+    ];
+    this.logger.log(`Cropping ${inputPath} bbox=${JSON.stringify(bbox)}`);
+    try {
+      await execFileAsync(bin, args);
+    } catch (err: any) {
+      this.logger.error(`Crop failed: ${err.message}`);
+      throw new Error(`Crop failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Compute per-bbox stats via `gdalinfo -stats -projwin <bbox> -json`.
+   * Returns null fields when GDAL did not produce any statistics.
+   */
+  async statsForBbox(inputPath: string, bbox: BboxLike): Promise<BboxStats> {
+    const args = [
+      '-stats',
+      '-json',
+      '-projwin',
+      String(bbox.minLng),
+      String(bbox.maxLat),
+      String(bbox.maxLng),
+      String(bbox.minLat),
+      '-projwin_srs',
+      'EPSG:4326',
+      inputPath,
+    ];
+    try {
+      const { stdout } = await execFileAsync('gdalinfo', args);
+      const info = JSON.parse(stdout);
+      const band = info.bands?.[0] ?? {};
+      const s = band.statistics ?? {};
+      const validPercentRaw = Number(
+        band.metadata?.['']?.STATISTICS_VALID_PERCENT ?? 0,
+      );
+      return {
+        min: typeof s.minimum === 'number' ? s.minimum : null,
+        max: typeof s.maximum === 'number' ? s.maximum : null,
+        mean: typeof s.mean === 'number' ? s.mean : null,
+        stdDev: typeof s.stdDev === 'number' ? s.stdDev : null,
+        validPercent: Number.isFinite(validPercentRaw) ? validPercentRaw : 0,
+      };
+    } catch (err: any) {
+      this.logger.error(`statsForBbox failed: ${err.message}`);
+      throw new Error(`statsForBbox failed: ${err.message}`);
     }
   }
 }
