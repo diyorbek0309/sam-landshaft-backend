@@ -157,15 +157,30 @@ export class GdalService {
       ]);
       const info = JSON.parse(stdout);
       const band = info.bands?.[0] ?? {};
+      // GDAL 3.9+ nests these under band.statistics, 3.8 puts them
+      // directly on the band, and STATISTICS_* metadata is a fallback.
       const s = band.statistics ?? {};
-      const validPercentRaw = Number(
-        band.metadata?.['']?.STATISTICS_VALID_PERCENT ?? 0,
-      );
+      const m = band.metadata?.[''] ?? {};
+      const pick = (
+        a: unknown,
+        b: unknown,
+        c: unknown,
+      ): number | null => {
+        for (const v of [a, b, c]) {
+          if (typeof v === 'number' && Number.isFinite(v)) return v;
+          if (typeof v === 'string') {
+            const n = Number(v);
+            if (Number.isFinite(n)) return n;
+          }
+        }
+        return null;
+      };
+      const validPercentRaw = Number(m.STATISTICS_VALID_PERCENT ?? 0);
       return {
-        min: typeof s.minimum === 'number' ? s.minimum : null,
-        max: typeof s.maximum === 'number' ? s.maximum : null,
-        mean: typeof s.mean === 'number' ? s.mean : null,
-        stdDev: typeof s.stdDev === 'number' ? s.stdDev : null,
+        min: pick(s.minimum, band.minimum, m.STATISTICS_MINIMUM),
+        max: pick(s.maximum, band.maximum, m.STATISTICS_MAXIMUM),
+        mean: pick(s.mean, band.mean, m.STATISTICS_MEAN),
+        stdDev: pick(s.stdDev, band.stdDev, m.STATISTICS_STDDEV),
         validPercent: Number.isFinite(validPercentRaw) ? validPercentRaw : 0,
       };
     } catch (err: any) {
