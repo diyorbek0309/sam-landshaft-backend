@@ -38,7 +38,13 @@ async function bootstrap() {
   );
 
   const port = config.get<number>('PORT', 3000);
-  await app.listen(port);
+  const server = await app.listen(port);
+  // Katta GeoTIFF (2 GB gacha) yuklashda sekin ulanishlarda so'rov 5 daqiqadan
+  // oshib ketishi mumkin. Node'ning default requestTimeout (300s) ni oshiramiz —
+  // aks holda upload 408 / "Network Error" bilan uziladi.
+  server.requestTimeout = 30 * 60 * 1000; // 30 daqiqa
+  server.headersTimeout = 31 * 60 * 1000;
+  server.keepAliveTimeout = 65 * 1000;
   logger.log(`Sam-Landshaft API running on http://localhost:${port}/api`);
   logger.log(`Allowed origins: ${origins.join(', ')}`);
 }
