@@ -161,10 +161,6 @@ export class FilesService {
       include: { category: true },
     });
 
-    // Asl faylni o'chiramiz — COG bir xil piksel ma'lumotni (lossless) saqlaydi.
-    // Diskni ~2 barobar tejaydi; download COG'dan beriladi (getOriginalPath fallback).
-    await fs.unlink(originalPath).catch(() => {});
-
     this.logger.log(`Fayl muvaffaqiyatli yuklandi: ${file.originalname} → COG (ID: ${record.id})`);
     return this.serializeFile(record);
   }
