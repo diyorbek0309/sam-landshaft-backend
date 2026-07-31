@@ -161,6 +161,10 @@ export class FilesService {
       include: { category: true },
     });
 
+    // Asl faylni o'chiramiz — COG bir xil piksel ma'lumotni (lossless) saqlaydi.
+    // Diskni ~2 barobar tejaydi; download COG'dan beriladi (getOriginalPath fallback).
+    await fs.unlink(originalPath).catch(() => {});
+
     this.logger.log(`Fayl muvaffaqiyatli yuklandi: ${file.originalname} → COG (ID: ${record.id})`);
     return this.serializeFile(record);
   }
@@ -221,7 +225,15 @@ export class FilesService {
 
   async getOriginalPath(id: number): Promise<{ path: string; filename: string }> {
     const file = await this.findOne(id);
-    return { path: file.originalPath, filename: file.filename };
+    // Asl fayllar diskni tejash uchun o'chirilgan. COG bir xil piksel
+    // ma'lumotni saqlaydi (lossless), shuning uchun asl yo'q bo'lsa COG beriladi.
+    if (fsSync.existsSync(file.originalPath)) {
+      return { path: file.originalPath, filename: file.filename };
+    }
+    return {
+      path: file.cogPath,
+      filename: `${file.category!.slug}_${file.year}.tif`,
+    };
   }
 
   async getCogPath(id: number): Promise<{ path: string; filename: string }> {
